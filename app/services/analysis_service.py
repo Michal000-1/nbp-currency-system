@@ -58,9 +58,9 @@ async def analyze_event_impact(code:str, event_date:date, days_before:int, days_
     after_candidates = []
 
     for d, rate in points:
-        if d <= event_date:
+        if d < event_date:
             before_candidates.append((d, rate))
-        if d >= event_date:
+        if d > event_date:
             after_candidates.append((d, rate))
 
     if not before_candidates:
