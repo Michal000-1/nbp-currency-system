@@ -12,4 +12,3 @@ app.include_router(analysis_router)
 @app.get("/")
 def test():
     return {"name": "NBP Currency Analysis App"}
-

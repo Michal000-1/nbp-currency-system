@@ -22,6 +22,11 @@ def shift_business_days(base_date: date, business_days: int, direction: int) -> 
     return current
 
 async def analyze_event_impact(code:str, event_date:date, days_before:int, days_after:int) -> EventImpactRate:
+    """Analyses the impact of a single event on the exchange rate within a given business day window.
+    Determines the 'before' rate as the closest available rate prior to the event date,
+    and the 'after' rate as the last available rate in the window. Calculates the nominal change (abs_change) and percentage change (pct_change),
+    and returns the full set of rates from the analysed window."""
+
     code = code.upper()
 
     if days_before == 0 and days_after == 0:
@@ -70,7 +75,7 @@ async def analyze_event_impact(code:str, event_date:date, days_before:int, days_
         raise HTTPException(status_code=404, detail="No rate on after event_date in selected range")
 
     before_date, before_rate = before_candidates[-1]
-    after_date, after_rate = after_candidates[0]
+    after_date, after_rate = after_candidates[-1]
 
     abs_change_raw = after_rate - before_rate
     pct_change_raw = 0.0 if before_rate == 0 else (abs_change_raw / before_rate) * 100
@@ -86,6 +91,10 @@ async def analyze_event_impact(code:str, event_date:date, days_before:int, days_
 
 
 async def analyze_events_impact(code:str, window_business_days: int) -> EventImpactResponse:
+    """Analyses the impact of all predefined events for a given currency and business-day window.
+    Runs single-event impact analysis for each event from the EVENTS list, skips events with unavailable data (404),
+    and returns a combined response containing per-event metrics and window rates."""
+
     code = code.upper()
 
     if window_business_days < 1:
