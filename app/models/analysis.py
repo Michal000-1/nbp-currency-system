@@ -47,3 +47,6 @@ class CompareEvents(BaseModel):
     abs_change_short: float
     abs_change_long: float
     is_short_stronger_pct: str
+    is_short_stronger_abs: bool
+
+

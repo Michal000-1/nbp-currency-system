@@ -3,6 +3,9 @@ from fastapi import HTTPException
 from app.models.analysis import EventImpactRate, EventRatePoint, EventImpactResponse, EventImpactItem
 from app.services.nbp_api import get_currency_rate, get_currency_rates_range
 from app.services.events import EVENTS
+from app.services.pandas_analysis import build_events_dataframe, compare_windows
+from app.models.analysis import CompareEvents
+
 
 def shift_business_days(base_date: date, business_days: int, direction: int) -> date:
 
@@ -117,7 +120,34 @@ async def analyze_events_impact(code:str, window_business_days: int) -> EventImp
     return EventImpactResponse(code=code, window_business_days=window_business_days ,events=items)
 
 
+async def get_events_impact_compare(code: str, short_window: int, long_window: int) -> list[CompareEvents]:
 
+    short_response = await analyze_events_impact(code, short_window)
+    long_response = await analyze_events_impact(code, long_window)
+
+    df_short = build_events_dataframe(code, short_window, short_response.events)
+    df_long = build_events_dataframe(code, long_window, long_response.events)
+
+    compared_df = compare_windows(df_short, df_long)
+
+    if compared_df.empty:
+        return []
+
+    compared_df = compared_df.rename(columns={
+                                              "pct_change_week": "pct_change_short",
+                                              "pct_change_3weeks": "pct_change_long",
+                                              "abs_change_week": "abs_change_short",
+                                              "abs_change_3weeks": "abs_change_long",
+                                              "is_week_stronger_pct_change": "is_short_stronger_pct",
+                                              "is_week_stronger_abs_change": "is_short_stronger_abs",
+                                              })
+    compared_df["code"] = code.upper()
+    compared_df["short_window"] = short_window
+    compared_df["long_window"] = long_window
+
+    rows = compared_df.to_dict(orient="records")
+
+    return [CompareEvents(**row) for row in rows]
 
 
 

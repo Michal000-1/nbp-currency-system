@@ -1,9 +1,7 @@
 from fastapi import APIRouter, Query, HTTPException
 from datetime import date
 from app.models.analysis import EventImpactRate, EventImpactResponse, CompareEvents
-from app.services.analysis_service import analyze_event_impact, analyze_events_impact
-
-from app.services.pandas_analysis import build_events_dataframe, compare_windows
+from app.services.analysis_service import analyze_event_impact, analyze_events_impact, get_events_impact_compare
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -26,26 +24,4 @@ async def get_event_impact_compare(code: str=Query(..., min_length=3, max_length
     if long_window <= short_window:
         raise HTTPException(status_code=400, detail="Long window must be greater than short window")
 
-    short_response = await analyze_events_impact(code, short_window)
-    long_response = await analyze_events_impact(code, long_window)
-
-    df_week = build_events_dataframe(code, short_window, short_response.events)
-    df_3weeks = build_events_dataframe(code, long_window, long_response.events)
-
-    compared_df = compare_windows(df_week, df_3weeks)
-    if compared_df.empty:
-        return []
-
-    compared_df = compared_df.rename(columns={
-                                              "pct_change_week": "pct_change_short",
-                                              "pct_change_3weeks": "pct_change_long",
-                                              "abs_change_week": "abs_change_short",
-                                              "abs_change_3weeks": "abs_change_long",
-                                              "is_week_stronger_pct_change": "is_short_stronger_pct",
-                                              })
-
-    compared_df["code"] = code.upper()
-    compared_df["short_window"] = short_window
-    compared_df["long_window"] = long_window
-
-    return compared_df.to_dict(orient="records")
+    return await get_events_impact_compare(code, short_window, long_window)
