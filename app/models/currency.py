@@ -1,10 +1,11 @@
 from pydantic import BaseModel
+from datetime import date
 
 class Currency(BaseModel):
     currency: str
     code: str
     rate: float
-    date: str
+    date: date
 
 class CurrencyRateEntry(BaseModel):
     no: str
