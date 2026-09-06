@@ -8,7 +8,6 @@ from app.models.analysis import CompareEvents
 
 
 def shift_business_days(base_date: date, business_days: int, direction: int) -> date:
-
     if direction not in (-1, 1):
         raise ValueError("Direction must be in (-1, 1)")
     if business_days == 0:

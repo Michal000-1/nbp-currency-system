@@ -37,7 +37,6 @@ def test_event_impact_invalid_format_code_returns_422():
 
 
 def test_event_impact_valid_input_returns_200_with_mock():
-
     fake_response = {"code": "USD",
                      "event_date": "2026-01-01",
                      "before_date": "2025-12-31",
@@ -59,3 +58,35 @@ def test_event_impact_valid_input_returns_200_with_mock():
         assert response.status_code == 200
         assert response.json()["code"] == "USD"
         assert "window_rates" in response.json()
+
+def test_currency_valid_input_returns_200_with_mock():
+    fake_response = {"currency": "dolar amerykański",
+                     "code": "USD",
+                     "rate": 3.72,
+                     "date": "2026-01-01"}
+
+    with patch("app.routers.currencies.get_currency_rate", new=AsyncMock(return_value=fake_response)):
+        response = client.get("/currencies/USD")
+
+        assert response.status_code == 200
+        assert response.json()["code"] == "USD"
+        assert response.json()["rate"] == 3.72
+        assert response.json()["date"] == "2026-01-01"
+
+
+def test_historical_valid_input_returns_200_with_mock():
+    fake_response = {"currency": "dolar amerykański",
+                     "code": "USD",
+                     "rates": [{"no": "01/A/NBP/2026", "effectiveDate": "2026-01-01", "mid": 3.38},
+                               {"no": "02/A/NBP/2026", "effectiveDate": "2026-01-02", "mid": 3.41},
+                               {"no": "03/A/NBP/2026", "effectiveDate": "2026-01-03", "mid": 3.52}]}
+
+    with patch("app.routers.currencies.get_currency_rates_range", new=AsyncMock(return_value=fake_response)):
+        response = client.get("/currencies/USD/history",
+                              params={"start_date": "2026-01-01", "end_date": "2026-12-31"})
+
+        assert response.status_code == 200
+        assert response.json()["code"] == "USD"
+        assert response.json()["rates"][0]["no"] == "01/A/NBP/2026"
+        assert len(response.json()["rates"]) == 3
+

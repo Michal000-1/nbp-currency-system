@@ -1,0 +1,22 @@
+[project]
+name = "nbp-currency-system"
+version = "0.1.0"
+description = "Currency analysis system based on the NBP API"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.135.1",
+    "httpx>=0.28.1",
+    "pandas>=2.3.3",
+    "pydantic>=2.12.5",
+    "requests>=2.32.5",
+    "streamlit>=1.55.0",
+    "uvicorn>=0.41.0",
+]
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

@@ -8,7 +8,32 @@ from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
-_cache = {}
+_current_cache = {}
+_range_cache = {}
+ONE_DAY_TTL_SECONDS = 24 * 60 * 60
+
+def cleanup_current_cache(today_key: str):
+    removed = 0
+    for key in list(_current_cache.keys()):
+        if not key.endswith(today_key):
+            del _current_cache[key]
+            removed += 1
+    if removed > 0:
+        logger.info(f"Current cache removed {removed}")
+
+def cleanup_range_cache(now):
+    removed = 0
+    for key in list(_range_cache.keys()):
+        saved_at, _result = _range_cache[key]
+        age_seconds = (now - saved_at).total_seconds()
+        if age_seconds > ONE_DAY_TTL_SECONDS:
+            del _range_cache[key]
+            removed += 1
+
+    if removed > 0:
+        logger.info(f"Range cache removed {removed}")
+
+
 
 NBP_API_URL = "https://api.nbp.pl/api/exchangerates/rates/A/"
 
@@ -35,11 +60,13 @@ def get_http_client() -> httpx.AsyncClient:
 
 async def get_currency_rate(code: str) -> Currency:
     code = code.upper()
+    today_key = datetime.now(tz=WARSAW_TZ).date().isoformat()
+    cache_key = f"{code}_{today_key}"
+    cleanup_current_cache(today_key)
 
-    cache_key = f"{code}_{datetime.now(tz=WARSAW_TZ).date()}"
-    if cache_key in _cache:
+    if cache_key in _current_cache:
         logger.info(f"Cache hit for {code}")
-        return _cache[cache_key]
+        return _current_cache[cache_key]
     logger.info(f"Cache miss for {code}, fetching from NBP")
 
     url = f"{NBP_API_URL}{code}"
@@ -82,18 +109,21 @@ async def get_currency_rate(code: str) -> Currency:
             raise HTTPException(status_code=500, detail="Invalid response from NBP API")
 
         result = Currency(currency=currency, code=code, rate=rate, date=effective_date)
-        _cache[cache_key] = result
+        _current_cache[cache_key] = result
         logger.info(f"Cached {code} successfully")
         return result
     raise HTTPException(status_code=503, detail="API unavailable after retries")
 
 async def get_currency_rates_range(code: str, start_date: date, end_date: date) -> CurrencyRateRange:
     code = code.upper()
-
     cache_key = f"{code}_{start_date}_{end_date}"
-    if cache_key in _cache:
+    now = datetime.now(tz=WARSAW_TZ)
+    cleanup_range_cache(now)
+
+    if cache_key in _range_cache:
         logger.info(f"Cache hit for {code}")
-        return _cache[cache_key]
+        _saved_at, cached_result = _range_cache[cache_key]
+        return cached_result
     logger.info(f"Cache miss for {code}, fetching from NBP")
 
     if start_date > end_date:
@@ -145,7 +175,7 @@ async def get_currency_rates_range(code: str, start_date: date, end_date: date) 
             raise HTTPException(status_code=500, detail="Invalid response from NBP API")
 
         result = CurrencyRateRange(currency=currency, code=code, rates=rates)
-        _cache[cache_key] = result
+        _range_cache[cache_key] = (now, result)
         logger.info(f"Cached {code} successfully")
         return result
     raise HTTPException(status_code=503, detail="API unavailable after retries")
