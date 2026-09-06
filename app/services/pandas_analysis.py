@@ -48,7 +48,7 @@ def compare_windows(df_week: pd.DataFrame, df_3weeks: pd.DataFrame) -> pd.DataFr
 
     merged_df = pd.merge(df_3weeks, df_week, on=["event_id", "event_name"], how="inner")
 
-    def compare_strength(row):
+    def compare_strenght(row):
         if abs(row["pct_change_week"]) > abs(row["pct_change_3weeks"]):
             return str("short")
         elif abs(row["pct_change_week"]) < abs(row["pct_change_3weeks"]):
@@ -56,7 +56,7 @@ def compare_windows(df_week: pd.DataFrame, df_3weeks: pd.DataFrame) -> pd.DataFr
         else:
             return str("equal")
 
-    merged_df["is_week_stronger_pct_change"] = merged_df.apply(compare_strength, axis=1)
+    merged_df["is_week_stronger_pct_change"] = merged_df.apply(compare_strenght, axis=1)
     merged_df["is_week_stronger_abs_change"] = abs(merged_df["abs_change_week"]) > abs(merged_df["abs_change_3weeks"])
 
     return merged_df

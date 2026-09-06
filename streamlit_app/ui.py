@@ -2,7 +2,6 @@ import streamlit as st
 import requests
 import pandas as pd
 import datetime
-import os
 
 st.set_page_config(page_title="Currency Analysis App", layout="wide")
 st.title("Currency Analysis App")
@@ -23,7 +22,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "Compare Events Impact",
 ])
 with st.sidebar:
-    backend_url = st.text_input("Backend URL", value=os.getenv("BACKEND_URL", "http://127.0.0.1:8000"))
+    backend_url = st.text_input("Backend URL", value="http://127.0.0.1:8000")
     if st.button("Check backend"):
         try:
             response = requests.get(f"{backend_url}/", timeout=5)
@@ -122,7 +121,7 @@ with tab3:
                 with col2:
                     st.metric("After rate", round(data["after_rate"], 2))
                 with col3:
-                    st.metric("Absolute change", round(data["abs_change"], 2))
+                    st.metric("Absolut change", round(data["abs_change"], 2))
                 with col4:
                     st.metric("Percentage change", round(data["pct_change"], 2))
 
@@ -170,5 +169,6 @@ with tab4:
                     st.json(df.round(2).to_dict(orient="records"))
         except Exception as e:
             st.error(f"Connection Error! {e}")
+
 
 
