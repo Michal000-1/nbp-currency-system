@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nbp-currency-system"
+version = "1.0.0"
+description = "Analiza kursów walut NBP z backendem FastAPI i interfejsem Streamlit."
+readme = "README.md"
+requires-python = ">=3.11"
+
+# Zależność wspólna dla backendu i frontendu.
+dependencies = [
+    "pandas==2.3.3",  # Analiza danych i tabele.
+]
+
+[project.optional-dependencies]
+# Instalacja backendu: pip install ".[backend]"
+backend = [
+    "fastapi==0.135.1",  # Framework API HTTP.
+    "httpx==0.28.1",  # Asynchroniczne zapytania do API NBP.
+    "pydantic==2.12.5",  # Modele danych i walidacja.
+    "uvicorn==0.41.0",  # Serwer uruchamiający FastAPI.
+    "holidays==0.104",
+]
+
+# Instalacja frontendu: pip install ".[frontend]"
+frontend = [
+    "requests==2.32.5",  # Zapytania HTTP ze Streamlita do backendu.
+    "streamlit==1.55.0",  # Interfejs użytkownika.
+]
+
+# Instalacja do testów: pip install ".[backend,test]"
+# Pełne środowisko: pip install ".[backend,frontend,test]"
+test = [
+    "pytest==9.0.2",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app", "app.*", "streamlit_app", "streamlit_app.*"]
+namespaces = true

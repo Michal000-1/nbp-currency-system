@@ -1,3 +1,5 @@
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from app.main import app
 from unittest.mock import AsyncMock, patch
@@ -14,16 +16,17 @@ def test_event_impact_negative_days_returns_422():
 
     assert response.status_code == 422
 
-def test_event_impact_both_days_zero_returns_400():
+@pytest.mark.parametrize(("days_before", "days_after"), [(0, 0), (0, 3), (3, 0)])
+def test_event_impact_zero_days_returns_422(days_before, days_after):
     response = client.get("/analysis/event-impact",
                           params={
                               "code": "USD",
                               "event_date": "2026-01-01",
-                              "days_before": 0,
-                              "days_after":0 })
+                              "days_before": days_before,
+                              "days_after": days_after })
 
 
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 def test_event_impact_invalid_format_code_returns_422():
     response = client.get("/analysis/event-impact",
@@ -59,3 +62,37 @@ def test_event_impact_valid_input_returns_200_with_mock():
         assert response.status_code == 200
         assert response.json()["code"] == "USD"
         assert "window_rates" in response.json()
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "params"),
+    [
+        (
+            "/analysis/events-impact",
+            {"code": "ZZZ", "window_business_days": 7},
+        ),
+        (
+            "/analysis/events-impact-compare",
+            {"code": "ZZZ", "short_window": 7, "long_window": 21},
+        ),
+    ],
+    ids=["all-events", "compare-events"],
+)
+def test_events_impact_unknown_currency_returns_404(monkeypatch, endpoint, params):
+    # Keep the real analysis functions; replace only the NBP service calls.
+    get_history = AsyncMock(
+        side_effect=HTTPException(status_code=404, detail="Currency not found")
+    )
+    get_current_rate = AsyncMock(
+        side_effect=HTTPException(status_code=404, detail="Currency not found")
+    )
+    monkeypatch.setattr("app.services.analysis_service.get_currency_rates_range", get_history)
+    monkeypatch.setattr("app.services.analysis_service.get_currency_rate", get_current_rate)
+
+    response = client.get(endpoint, params=params)
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Currency not found"}
+    # An invalid currency must stop the analysis at the first event.
+    get_history.assert_awaited_once()
+    get_current_rate.assert_awaited_once_with("ZZZ")

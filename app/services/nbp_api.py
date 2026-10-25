@@ -1,18 +1,22 @@
 import httpx
 import asyncio
 import logging
-from datetime import date, datetime
-from zoneinfo import ZoneInfo
-from app.models.currency import Currency, CurrencyRateRange
+from datetime import date, timedelta
+from time import monotonic
+from app.models.currency import Currency, CurrencyRateEntry, CurrencyRateRange
+from app.services.validation import validate_date_range
 from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
-_cache = {}
+_cache: dict[str, tuple[CurrencyRateRange, float | None]] = {}
+_current_rate_cache: dict[str, tuple[Currency, float]] = {}
 
 NBP_API_URL = "https://api.nbp.pl/api/exchangerates/rates/A/"
-
-WARSAW_TZ = ZoneInfo('Europe/Warsaw')
+NBP_MAX_REQUEST_DAYS = 93
+CURRENT_RATE_CACHE_TTL_SECONDS = 5 * 60
+HISTORY_CACHE_TTL_SECONDS = 5 * 60
+HISTORY_CACHE_MAX_ENTRIES = 500
 
 _client: httpx.AsyncClient | None = None
 
@@ -36,10 +40,12 @@ def get_http_client() -> httpx.AsyncClient:
 async def get_currency_rate(code: str) -> Currency:
     code = code.upper()
 
-    cache_key = f"{code}_{datetime.now(tz=WARSAW_TZ).date()}"
-    if cache_key in _cache:
-        logger.info(f"Cache hit for {code}")
-        return _cache[cache_key]
+    cached = _current_rate_cache.get(code)
+    if cached is not None:
+        cached_rate, expires_at = cached
+        if monotonic() < expires_at:
+            logger.info(f"Cache hit for {code}")
+            return cached_rate
     logger.info(f"Cache miss for {code}, fetching from NBP")
 
     url = f"{NBP_API_URL}{code}"
@@ -77,28 +83,69 @@ async def get_currency_rate(code: str) -> Currency:
             rate = data["rates"][0]["mid"]
             currency = data["currency"]
             effective_date = data["rates"][0]["effectiveDate"]
+            result = Currency(currency=currency, code=code, rate=rate, date=effective_date)
 
-        except (KeyError, TypeError, IndexError):
+        except (KeyError, TypeError, IndexError, ValueError):
             raise HTTPException(status_code=500, detail="Invalid response from NBP API")
 
-        result = Currency(currency=currency, code=code, rate=rate, date=effective_date)
-        _cache[cache_key] = result
+        _current_rate_cache[code] = (result, monotonic() + CURRENT_RATE_CACHE_TTL_SECONDS)
         logger.info(f"Cached {code} successfully")
         return result
     raise HTTPException(status_code=503, detail="API unavailable after retries")
 
 async def get_currency_rates_range(code: str, start_date: date, end_date: date) -> CurrencyRateRange:
+    validate_date_range(start_date, end_date)
     code = code.upper()
 
     cache_key = f"{code}_{start_date}_{end_date}"
-    if cache_key in _cache:
-        logger.info(f"Cache hit for {code}")
-        return _cache[cache_key]
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        cached_history, expires_at = cached
+        if expires_at is None or monotonic() < expires_at:
+            logger.info(f"Cache hit for {code}")
+            return cached_history
     logger.info(f"Cache miss for {code}, fetching from NBP")
 
-    if start_date > end_date:
-        raise HTTPException(status_code=400, detail="Start date cannot be later than end date")
-    
+    # Capture this before fetching: the response can arrive after midnight.
+    includes_today = end_date == date.today()
+    currency = None
+    rates_by_date: dict[date, CurrencyRateEntry] = {}
+    chunk_start = start_date
+
+    while chunk_start <= end_date:
+        # Both boundary dates are included, so a 93-day chunk ends 92 days later.
+        chunk_end = min(chunk_start + timedelta(days=NBP_MAX_REQUEST_DAYS - 1), end_date)
+        chunk = await _fetch_currency_rates_chunk(code, chunk_start, chunk_end)
+        if chunk is not None and chunk.rates:
+            currency = chunk.currency
+            rates_by_date.update((rate.effectiveDate, rate) for rate in chunk.rates)
+        chunk_start = chunk_end + timedelta(days=1)
+
+    if currency is None:
+        # A 404 for one chunk can mean a weekend or holiday, not an unknown code.
+        # Check the code only when the entire requested range has no rates.
+        await get_currency_rate(code)
+        raise HTTPException(status_code=404, detail="No data found for given range")
+
+    result = CurrencyRateRange(
+        currency=currency,
+        code=code,
+        rates=[rates_by_date[day] for day in sorted(rates_by_date)],
+    )
+    # Cache only after every chunk succeeds; errors must not save partial history.
+    expires_at = monotonic() + HISTORY_CACHE_TTL_SECONDS if includes_today else None
+    _cache[cache_key] = (result, expires_at)
+    while len(_cache) > HISTORY_CACHE_MAX_ENTRIES:
+        oldest_key = next(iter(_cache))
+        del _cache[oldest_key]
+    logger.info(f"Cached {code} successfully")
+    return result
+
+
+async def _fetch_currency_rates_chunk(
+    code: str, start_date: date, end_date: date,
+) -> CurrencyRateRange | None:
+    """Fetch one NBP range, returning None when it has no published rates."""
     url = f"{NBP_API_URL}{code}/{start_date}/{end_date}"
     max_tries = 3
     client = get_http_client()
@@ -112,14 +159,7 @@ async def get_currency_rates_range(code: str, start_date: date, end_date: date) 
         except httpx.HTTPStatusError as error:
             status_code = error.response.status_code if error.response else 500
             if status_code == 404:
-                try:
-                    await get_currency_rate(code)
-                except HTTPException as code_error:
-                    if code_error.status_code == 404:
-                        raise HTTPException(status_code=404, detail="Currency not found")
-                    else:
-                        raise code_error
-                raise HTTPException(status_code=status_code, detail="No data found for given range")
+                return None
 
             if status_code in (500, 503) and attempt < max_tries - 1:
                 logger.warning(f"Retry attempt {attempt + 1}/{max_tries} for {code}")
@@ -140,14 +180,9 @@ async def get_currency_rates_range(code: str, start_date: date, end_date: date) 
         try:
             rates = data["rates"]
             currency = data["currency"]
+            return CurrencyRateRange(currency=currency, code=code, rates=rates)
 
-        except (KeyError, TypeError):
+        except (KeyError, TypeError, ValueError):
             raise HTTPException(status_code=500, detail="Invalid response from NBP API")
 
-        result = CurrencyRateRange(currency=currency, code=code, rates=rates)
-        _cache[cache_key] = result
-        logger.info(f"Cached {code} successfully")
-        return result
     raise HTTPException(status_code=503, detail="API unavailable after retries")
-
-

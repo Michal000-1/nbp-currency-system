@@ -4,8 +4,11 @@ from app.models.analysis import EventImpactRate, EventRatePoint, EventImpactResp
 from app.services.nbp_api import get_currency_rate, get_currency_rates_range
 from app.services.events import EVENTS
 from app.services.pandas_analysis import build_events_dataframe, compare_windows
+from app.services.validation import validate_business_days, validate_date_range
 from app.models.analysis import CompareEvents
+import holidays
 
+PL_HOLIDAYS = holidays.country_holidays("PL")
 
 def shift_business_days(base_date: date, business_days: int, direction: int) -> date:
 
@@ -19,10 +22,21 @@ def shift_business_days(base_date: date, business_days: int, direction: int) -> 
 
     while moved < business_days:
         current = current + timedelta(days=direction)
-        if current.weekday() < 5:
+        if current.weekday() < 5 and current not in PL_HOLIDAYS:
             moved = moved + 1
 
     return current
+
+def get_event_date_range(event_date: date, days_before: int, days_after: int) -> tuple[date, date]:
+    validate_business_days(days_before, "Days before")
+    validate_business_days(days_after, "Days after")
+    validate_date_range(event_date, event_date)
+
+    start_date = shift_business_days(event_date, days_before, -1)
+    end_date = shift_business_days(event_date, days_after, 1)
+    validate_date_range(start_date, end_date)
+    return start_date, end_date
+
 
 async def analyze_event_impact(code:str, event_date:date, days_before:int, days_after:int) -> EventImpactRate:
     """Analyses the impact of a single event on the exchange rate within a given business day window.
@@ -32,14 +46,7 @@ async def analyze_event_impact(code:str, event_date:date, days_before:int, days_
 
     code = code.upper()
 
-    if days_before == 0 and days_after == 0:
-        raise HTTPException(status_code=400, detail="Days before or after cannot both be 0")
-
-    if days_before < 0 or days_after < 0:
-        raise HTTPException(status_code=400, detail="Days before or after cannot be negative")
-
-    start_date = shift_business_days(event_date, days_before, -1)
-    end_date = shift_business_days(event_date, days_after, 1)
+    start_date, end_date = get_event_date_range(event_date, days_before, days_after)
 
     try:
         history = await get_currency_rates_range(code, start_date, end_date)
@@ -58,7 +65,7 @@ async def analyze_event_impact(code:str, event_date:date, days_before:int, days_
 
     points = []
     for r in history.rates:
-        d = date.fromisoformat(r.effectiveDate)
+        d = r.effectiveDate
         points.append((d, r.mid))
     points.sort(key=lambda point: point[0])
 
@@ -86,7 +93,7 @@ async def analyze_event_impact(code:str, event_date:date, days_before:int, days_
     abs_change = round(abs_change_raw, 3)
     pct_change = round(pct_change_raw, 3)
 
-    window_rates = [EventRatePoint(date=date.fromisoformat(r.effectiveDate), rate=r.mid) for r in history.rates]
+    window_rates = [EventRatePoint(date=r.effectiveDate, rate=r.mid) for r in history.rates]
 
     return EventImpactRate(code=code, event_date=event_date, before_date=before_date, before_rate=before_rate,
                            after_date=after_date, after_rate=after_rate, pct_change=pct_change, window_rates=window_rates,
@@ -100,8 +107,11 @@ async def analyze_events_impact(code:str, window_business_days: int) -> EventImp
 
     code = code.upper()
 
-    if window_business_days < 1:
-        raise HTTPException(status_code=400, detail="Window business days must be greater than or equal to 1")
+    validate_business_days(window_business_days, "Window business days")
+
+    # Check every requested window before starting any NBP requests.
+    for event in EVENTS:
+        get_event_date_range(event.event_date, window_business_days, window_business_days)
 
     items: list[EventImpactItem] = []
 
@@ -109,6 +119,8 @@ async def analyze_events_impact(code:str, window_business_days: int) -> EventImp
         try:
             impact_rate = await analyze_event_impact(code, event.event_date, window_business_days, window_business_days)
         except HTTPException as error:
+            if error.status_code == 404 and error.detail == "Currency not found":
+                raise HTTPException(status_code=404, detail="Currency not found")
             if error.status_code == 404:
                 continue
             raise error
@@ -121,6 +133,16 @@ async def analyze_events_impact(code:str, window_business_days: int) -> EventImp
 
 
 async def get_events_impact_compare(code: str, short_window: int, long_window: int) -> list[CompareEvents]:
+
+    validate_business_days(short_window, "Short window")
+    validate_business_days(long_window, "Long window")
+    if long_window <= short_window:
+        raise HTTPException(status_code=400, detail="Long window must be greater than short window")
+
+    # The short window is contained in the long one. Validate the long one first
+    # so an invalid comparison never starts fetching the short-window data.
+    for event in EVENTS:
+        get_event_date_range(event.event_date, long_window, long_window)
 
     short_response = await analyze_events_impact(code, short_window)
     long_response = await analyze_events_impact(code, long_window)
@@ -148,7 +170,6 @@ async def get_events_impact_compare(code: str, short_window: int, long_window: i
     rows = compared_df.to_dict(orient="records")
 
     return [CompareEvents(**row) for row in rows]
-
 
 
 
