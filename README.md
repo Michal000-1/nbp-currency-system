@@ -106,9 +106,12 @@ wykrywany automatycznie; jawny wariant to
 `podman compose -f compose.yaml up --build -d`.
 
 Frontend jest dostępny pod <http://localhost:8501>, backend pod
-<http://localhost:8000>. Usługi komunikują się we wspólnej sieci przez nazwę
-`nbp-app-backend`. Przy uruchamianiu frontend oczekuje na pomyślny healthcheck
-backendu, który odpytuje `/`. Ten test sprawdza odpowiedź FastAPI, a nie NBP.
+<http://localhost:8000>. Obie usługi należą do wspólnej sieci projektu Compose,
+domyślnie `nbp-currency-system_default` przy nazwie projektu `nbp-currency-system`.
+W tej sieci `nbp-app-backend` jest nazwą usługi backendu i jej aliasem sieciowym.
+Frontend wysyła do niej żądania pod adresem `http://nbp-app-backend:8000`.
+Przy uruchamianiu frontend oczekuje na pomyślny healthcheck backendu, który
+odpytuje `/`. Ten test sprawdza odpowiedź FastAPI, a nie NBP.
 
 ```bash
 podman compose ps
